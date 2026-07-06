@@ -15,6 +15,16 @@
 // Build:  g++ -O3 -march=native -fopenmp -std=c++17 cpp/placer.cpp -o cpp/placer
 // Run:    cpp/placer grid_info netlist io_placement placer_init out_dir \
 //                    [--updts U] [--swps S] [--temp T] [--threads N] [--no-trace]
+//
+// Threads: the swap is memory-bound, so pin ONE thread per physical core (avoid
+//          SMT siblings sharing a core) for stable, best runtime. Do it with env
+//          vars -- no rebuild needed:
+//              OMP_PLACES=cores OMP_PROC_BIND=spread OMP_NUM_THREADS=N ./placer ...
+//          OMP_PLACES=cores makes each "place" a full physical core (the runtime
+//          handles the SMT/topology mapping). OMP_PROC_BIND=spread distributes
+//          threads across CCDs/sockets for more aggregate L3 + bandwidth; try
+//          'close' instead for more shared-L3 locality. Keep N <= #physical cores.
+//          Confirm the binding with OMP_DISPLAY_AFFINITY=true.
 
 
 #include <cstdio>
@@ -283,9 +293,14 @@ int main(int argc, char **argv) {
                 }
             } else {
                 int start = (phase == 1) ? 1 : 0;
-                for (int cx = 0; cx < W; cx++) for (int cy = start; cy < H; cy += 2) {
+                // cy-outer / cx-inner: consecutive pairs stride by 1 slot, so the swap
+                // streams st row-major (was cx-outer -> stride W, column-major = cache-hostile).
+                // Red-black keeps pairs disjoint, so reordering them is bit-identical.
+                for (int cy = start; cy < H; cy += 2) {
                     if (cy == H - 1) continue;
-                    pm.push_back((int32_t)gslot(ty, cx, cy)); ps.push_back((int32_t)gslot(ty, cx, cy + 1));
+                    for (int cx = 0; cx < W; cx++) {
+                        pm.push_back((int32_t)gslot(ty, cx, cy)); ps.push_back((int32_t)gslot(ty, cx, cy + 1));
+                    }
                 }
             }
         }
