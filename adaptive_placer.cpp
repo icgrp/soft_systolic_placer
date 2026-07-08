@@ -29,6 +29,7 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 #include <string>
@@ -58,16 +59,30 @@ static vector<string> ws_split(const string &s) {
 }
 
 
+// Metropolis accept for a bad move (d >= 0): true with probability exp(-d/T).
+// rng r is a 16-bit LFSR draw in [0,65535], so compare against 65536*exp(-d/T).
+static inline bool accept_metro(int64_t d, int32_t r, double T) {
+    return (double)r < 65536.0 * std::exp(-(double)d / T);
+}
+
 int main(int argc, char **argv) {
     if (argc < 6) { fprintf(stderr, "usage: placer grid netlist io init outdir [--updts U --swps S --temp T --threads N --no-trace]\n"); return 1; }
     string f_grid = argv[1], f_net = argv[2], f_io = argv[3], f_init = argv[4], outdir = argv[5];
-    int UP = 2, SW = 1, THREADS = 0; long TEMP = 0; bool no_trace = false;
+    int UP = 100000, SW = 10, THREADS = 0; long TEMP = 65535; bool no_trace = false;
+    int CREEP = 95, STALL = 12;   // adaptive knobs: productive-band cool %, plateau window
+    bool metro = true;            // Metropolis accept (exp(-dC/T)); --threshold reverts to prob-threshold
+    bool verbose = false;         // per-update trace
     for (int i = 6; i < argc; i++) {
         string a = argv[i];
-        if (a == "--updts") UP = atoi(argv[++i]);
+        if (a == "--updts") UP = atoi(argv[++i]);         // safety cap on updates
         else if (a == "--swps") SW = atoi(argv[++i]);
-        else if (a == "--temp") TEMP = atol(argv[++i]);
+        else if (a == "--temp") TEMP = atol(argv[++i]);   // initial (hot) temperature
         else if (a == "--threads") THREADS = atoi(argv[++i]);
+        else if (a == "--creep") CREEP = atoi(argv[++i]); // 95=cool 5%/updt (robust); 97=slower/better-avg
+        else if (a == "--stall") STALL = atoi(argv[++i]); // updates of no-improvement before stopping
+        else if (a == "--metro") metro = true;            // energy-aware accept (default)
+        else if (a == "--threshold") metro = false;       // legacy prob-threshold accept (ignores magnitude)
+        else if (a == "--verbose") verbose = true;        // per-update alpha/temp/cost to stderr
         else if (a == "--no-trace") no_trace = true;
     }
     if (THREADS > 0) omp_set_num_threads(THREADS);
@@ -247,13 +262,25 @@ int main(int argc, char **argv) {
     vector<int64_t> Sxc(C, 0), Syc(C, 0);
 
 
-    // ---------------------------------------------------------------- schedule
-    long temp = TEMP;
-    long steps = (long)UP * SW - 1;
-    long dec = steps > 0 ? temp / steps : 0;
-    long thr = steps > 0 ? temp - dec * (steps - 1) : 0;
-    int phase = 0;
-    int64_t cost = 0;   // final objective (squared-Manhattan WL), for reporting
+    // ---------------------------------------------------------------- adaptive schedule
+    // The fixed schedule cools `temp` by a constant decrement every swap over a
+    // preset UP*SW steps.  Here temp is instead a probability threshold that is
+    // re-scaled once per update from the *observed* acceptance ratio (VPR-style
+    // bands), and UP is only a safety cap: we stop when the objective plateaus.
+    long temp = TEMP;                       // initial threshold (start hot)
+    int  phase = 0;
+    long naccept = 0, nattempt = 0;         // acceptance stats over one update's swaps
+    long nbadatt = 0, nbadacc = 0;          // strictly-worsening (d>0) moves: attempted / accepted
+                                            // (drives cooling; neutral d==0 moves — abundant on a
+                                            //  sparse page of empty slots — are excluded)
+    int64_t cost = 0, best_cost = -1;       // objective (squared-Manhattan WL); best seen
+    int  stall = 0;                         // consecutive non-improving updates
+    int  used_updates = 0;                  // how many updates we actually ran
+    bool done = false;
+    const double COST_EPS  = 1e-3;          // must beat best by >0.1% to reset the plateau
+    const int    STALL_LIM = STALL;         // stop after this many non-improving updates
+    const long   TEMP_FLOOR = metro ? 1 : 100; // frozen point (cost-units for metro), guarantees stop
+    const double MELT_A    = 0.80;          // above this we're still in the random melt
 
 
     std::filesystem::create_directories(outdir);
@@ -303,6 +330,17 @@ int main(int argc, char **argv) {
             for (long s = 0; s < Ssz; s++) { long c = st[s*4+0]; st[s*4+2] = (int32_t)Sxc[c]; st[s*4+3] = (int32_t)Syc[c]; }
 
 
+            // objective cost of the current placement, O(S), Sx/Sy fresh here
+            #pragma omp single
+            { cost = 0; naccept = 0; nattempt = 0; nbadatt = 0; nbadacc = 0; }  // barrier after single
+            #pragma omp for schedule(static) reduction(+:cost)
+            for (long s = 0; s < Ssz; s++) {
+                int64_t x = slot_x[s], y = slot_y[s];
+                cost += (int64_t)st[s*4+1]*(x*x + y*y)
+                      - (x*(int64_t)st[s*4+2] + y*(int64_t)st[s*4+3]);
+            }
+
+
             if (!no_trace) {
                 #pragma omp single
                 write_trace("post_sum");             // implicit barrier after single
@@ -312,24 +350,34 @@ int main(int argc, char **argv) {
             for (int sw = 0; sw < SW; sw++) {
                 long lo = phase_off[phase], hi = phase_off[phase+1];
                 if (phase == 0 || phase == 2) {      // horizontal: x-axis
-                    #pragma omp for schedule(static)
+                    #pragma omp for schedule(static) reduction(+:naccept,nbadatt,nbadacc)
                     for (long i = lo; i < hi; i++) {
                         int32_t sa = pm[i], sb = ps[i];
                         int64_t xa = slot_x[sa], xb = slot_x[sb];
                         int64_t da = (int64_t)st[sa*4+1]*(xb*xb-xa*xa) - 2*(int64_t)st[sa*4+2]*(xb-xa);
                         int64_t db = (int64_t)st[sb*4+1]*(xa*xa-xb*xb) - 2*(int64_t)st[sb*4+2]*(xa-xb);
-                        if (da + db < 0 || rng[sa] < temp)
+                        int64_t d = da + db;
+                        bool acc = d < 0 || (metro ? accept_metro(d, rng[sa], (double)temp) : (rng[sa] < temp));
+                        if (d > 0) { nbadatt++; if (acc) nbadacc++; }
+                        if (acc) {
                             for (int k = 0; k < 4; k++) { int32_t t = st[sa*4+k]; st[sa*4+k] = st[sb*4+k]; st[sb*4+k] = t; }
+                            naccept++;
+                        }
                     }
                 } else {                             // vertical: y-axis
-                    #pragma omp for schedule(static)
+                    #pragma omp for schedule(static) reduction(+:naccept,nbadatt,nbadacc)
                     for (long i = lo; i < hi; i++) {
                         int32_t sa = pm[i], sb = ps[i];
                         int64_t ya = slot_y[sa], yb = slot_y[sb];
                         int64_t da = (int64_t)st[sa*4+1]*(yb*yb-ya*ya) - 2*(int64_t)st[sa*4+3]*(yb-ya);
                         int64_t db = (int64_t)st[sb*4+1]*(ya*ya-yb*yb) - 2*(int64_t)st[sb*4+3]*(ya-yb);
-                        if (da + db < 0 || rng[sa] < temp)
+                        int64_t d = da + db;
+                        bool acc = d < 0 || (metro ? accept_metro(d, rng[sa], (double)temp) : (rng[sa] < temp));
+                        if (d > 0) { nbadatt++; if (acc) nbadacc++; }
+                        if (acc) {
                             for (int k = 0; k < 4; k++) { int32_t t = st[sa*4+k]; st[sa*4+k] = st[sb*4+k]; st[sb*4+k] = t; }
+                            naccept++;
+                        }
                     }
                 }
                 // advance every slot's LFSR once per phase
@@ -340,7 +388,7 @@ int main(int argc, char **argv) {
                     rng[s] = ((v<<1) | fb) & 0xFFFF;
                 }
                 #pragma omp single
-                { phase = (phase + 1) % 4; temp = (temp > thr) ? temp - dec : 0; }  // barrier after single
+                { nattempt += hi - lo; phase = (phase + 1) % 4; }   // barrier after single
             }
 
 
@@ -348,6 +396,37 @@ int main(int argc, char **argv) {
                 #pragma omp single
                 write_trace("post_swap");
             }
+
+
+            // -------- adaptive temperature (VPR-style bands) + stopping ---------
+            #pragma omp single
+            {
+                // Bad-move acceptance ratio drives cooling: it measures whether the
+                // temperature is too high independent of how many *improving* moves
+                // happen to be available (those keep the raw accept ratio high early
+                // and would otherwise crash the schedule before optimization is done).
+                double pbad = nbadatt > 0 ? (double)nbadacc / (double)nbadatt : 0.0;
+                if (verbose) fprintf(stderr, "  u=%d pbad=%.3f temp=%ld cost=%lld stall=%d\n",
+                                     u, pbad, temp, (long long)cost, stall);
+                if      (pbad > 0.96) temp = temp / 2;          // way too hot: dive
+                else if (pbad > MELT_A) temp = (temp * 9) / 10; // hot: cool quick
+                else                   temp = (temp * CREEP) / 100; // productive/cold: creep
+                // Objective-plateau detection on the BEST cost seen, but only once we
+                // are past the random melt (pbad high => still churning, not converged).
+                if (pbad < MELT_A) {
+                    if (best_cost < 0 ||
+                        (double)cost < (double)best_cost - COST_EPS * (double)best_cost) {
+                        best_cost = cost; stall = 0;             // new best: keep going
+                    } else {
+                        stall++;                                 // no real improvement
+                    }
+                }
+                used_updates = u + 1;
+                // Stop on plateau OR once frozen (temp floor guarantees termination).
+                if (stall >= STALL_LIM || temp <= TEMP_FLOOR)
+                    done = true;
+            }   // barrier: every thread now sees `done`
+            if (done) break;
         }
 
 
@@ -377,8 +456,9 @@ int main(int argc, char **argv) {
     }
 
 
-    fprintf(stderr, "[place %.4f s, %d threads, %ld cells | cost %lld]\n",
-            omp_get_wtime() - _t0, omp_get_max_threads(), C, (long long)cost);
+    fprintf(stderr, "[place %.4f s, %d threads, %ld cells | %d updates, cost %lld (best %lld)]\n",
+            omp_get_wtime() - _t0, omp_get_max_threads(), C, used_updates,
+            (long long)cost, (long long)best_cost);
     if (!no_trace) { fclose(tf); fprintf(stderr, "[completed] -> %s\n", trace_path.c_str()); }
     else {
         // placement-engine mode: write final_systolic.place (VTR format)
