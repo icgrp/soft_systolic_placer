@@ -127,14 +127,33 @@ def main():
                     help="subset by name (no .blif), e.g. sha bgm  (for quick testing)")
     ap.add_argument("--workdir", default=f"{ROOT}/soft_systolic_placer/bench_work")
     ap.add_argument("--out", default=None, help="CSV path (default <workdir>/results.csv)")
-    ap.add_argument("--keep", action="store_true", help="keep VTR products (debug)")
+    ap.add_argument("--keep", action="store_true", help="keep VTR products + rr-graph caches (debug)")
     ap.add_argument("--timeout", type=int, default=10800)
     ap.add_argument("--vpr", default=VPR, help="path to the vpr binary with the systolic placer")
+    ap.add_argument("--systolic-threads", type=int, default=1,
+                    help="SYSTOLIC_THREADS for the systolic placer (1 = fair per-core; >1 uses the persistent OpenMP team)")
+    ap.add_argument("--no-cache", dest="cache", action="store_false",
+                    help="disable rr-graph/delay-lookup caching (rebuild every run, default VPR behavior)")
     args = ap.parse_args()
     VPR = args.vpr
+    # VPR runs with cwd set to each benchmark subdir, so all paths we hand it must be
+    # absolute (place files, rr-graph caches, delay lookups).
+    args.workdir = os.path.abspath(args.workdir)
     print(f"vpr = {VPR}", flush=True)
 
     os.makedirs(args.workdir, exist_ok=True)
+    # rr-graph / delay-lookup cache. Default VPR behavior is preserved (native 4*num_pins
+    # width for the place delay model, cw for routing) -- we only avoid recomputing the
+    # SAME graph/lookup repeatedly. The place delay model is arch-only (identical for every
+    # same-page-size benchmark) -> cache per page size; the routing graph is at the
+    # per-benchmark channel width -> cache per benchmark (reused across its seeds).
+    cache = f"{args.workdir}/_cache"
+    if args.cache:
+        os.makedirs(cache, exist_ok=True)
+    def place_cache(W, H):  # native-width delay-model graph + delta lookup (per page size)
+        return f"{cache}/place_{W}x{H}.rr.bin", f"{cache}/place_{W}x{H}.dl"
+    def route_cache(name):  # routing graph at this benchmark's channel width (per benchmark)
+        return f"{cache}/route_{name}.rr.bin"
     out = args.out or f"{args.workdir}/results.csv"
     new = not os.path.exists(out)
     csvf = open(out, "a", newline="")
@@ -157,6 +176,14 @@ def main():
             w = f"{args.workdir}/{name}"
             shutil.rmtree(w, ignore_errors=True); os.makedirs(w)
             shutil.copy(blif, f"{w}/{bench}")
+            # Start each benchmark with an empty cache so disk stays bounded to ONE
+            # benchmark's graphs (~2 GB peak for 100x100), not the whole run. This trades
+            # cross-benchmark reuse of the place graph for disk safety; within a benchmark
+            # the graph is still built once and reused across all its seeds.
+            if args.cache and not args.keep:
+                for fn in os.listdir(cache):
+                    try: os.remove(os.path.join(cache, fn))
+                    except OSError: pass
             J = ["-j", str(args.workers)]
             print(f"[{time.strftime('%H:%M:%S')}] {name}  page={W}x{H} cw={cw} workers={args.workers}", flush=True)
 
@@ -167,7 +194,17 @@ def main():
                 wr.writerow({"bench": name, "W": W, "H": H, "cw": cw, "error": "gen_arch"}); csvf.flush(); continue
 
             # ---- 1. timing VPR run: pack + timing-driven place ----
-            rc, _ = sh([VPR, "systolic.xml", bench, "--pack", "--place", *J],
+            # Also seeds/uses the per-page-size place delay-model cache: the FIRST
+            # same-size benchmark writes it (native width), later ones read it.
+            prr, pdl = place_cache(W, H)
+            pc = []
+            if args.cache:
+                if os.path.exists(prr) and os.path.exists(pdl):
+                    pc = ["--read_rr_graph", prr, "--read_placement_delay_lookup", pdl,
+                          "--route_chan_width", str(cw)]  # width is a formality; loaded graph is native
+                else:
+                    pc = ["--write_rr_graph", prr, "--write_placement_delay_lookup", pdl]
+            rc, _ = sh([VPR, "systolic.xml", bench, "--pack", "--place", *pc, *J],
                        f"{w}/io_timing.log", w, timeout=args.timeout)
             if rc != 0:
                 wr.writerow({"bench": name, "W": W, "H": H, "cw": cw, "error": "pack_place"}); csvf.flush()
@@ -187,21 +224,30 @@ def main():
                        "systolic_netlist_info", "systolic_grid_info", "systolic_arch_info"}
 
             # ---- 3. RUNS seeds: place (fixed IO) -> route -> record -> clean ----
+            rrt = route_cache(name)
             fmaxes, ptimes = [], []
             for seed in range(args.runs):
                 pf, plog, rlog = f"{w}/s{seed}.place", f"{w}/pl_{seed}.log", f"{w}/rt_{seed}.log"
                 row = {"bench": name, "seed": seed, "W": W, "H": H, "cw": cw}
                 try:
+                    # place: read the per-page-size native delay-model cache (byte-identical)
+                    pc = (["--read_rr_graph", prr, "--read_placement_delay_lookup", pdl,
+                           "--route_chan_width", str(cw)]
+                          if args.cache and os.path.exists(prr) and os.path.exists(pdl) else [])
                     sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net", "--place",
                         "--place_algorithm", "systolic", "--fix_clusters", "io.place",
-                        "--place_file", pf, *J],
-                       plog, w, env={"SYSTOLIC_THREADS": 1, "SYSTOLIC_SEED": seed}, timeout=args.timeout)
+                        "--place_file", pf, *pc, *J],
+                       plog, w, env={"SYSTOLIC_THREADS": args.systolic_threads, "SYSTOLIC_SEED": seed},
+                       timeout=args.timeout)
                     (row["sys_total_s"], row["sys_place_core_s"],
                      row["sys_sta_s"], row["sys_setup_wb_s"]) = parse_systolic(open(plog).read())
 
+                    # route: build the per-benchmark cw graph on first seed, reuse after
+                    rc_ = (["--read_rr_graph", rrt] if args.cache and os.path.exists(rrt)
+                           else (["--write_rr_graph", rrt] if args.cache else []))
                     _, row["route_wall_s"] = sh(
                         [VPR, "systolic.xml", bench, "--net_file", f"{name}.net",
-                         "--place_file", pf, "--route", "--route_chan_width", str(cw), *J],
+                         "--place_file", pf, "--route", "--route_chan_width", str(cw), *rc_, *J],
                         rlog, w, timeout=args.timeout)
                     row["routed_ok"], row["wl"], row["cpd_ns"], row["fmax_mhz"] = parse_route(open(rlog).read())
                 except Exception as ex:
@@ -221,9 +267,11 @@ def main():
                 pm = statistics.median(ptimes) if ptimes else float("nan")
                 print(f"    -> Fmax {fm:.2f} +/- {sd:.2f} MHz (n={len(fmaxes)}), median systolic_place {pm:.4f}s", flush=True)
             if not args.keep:
-                shutil.rmtree(w, ignore_errors=True)
+                shutil.rmtree(w, ignore_errors=True)  # caches are cleared at the next benchmark's start
 
     csvf.close()
+    if args.cache and not args.keep:
+        shutil.rmtree(cache, ignore_errors=True)
     print(f"\nwrote {out}", flush=True)
 
 
