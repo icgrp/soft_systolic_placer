@@ -211,10 +211,18 @@ void run_systolic(PlacerState& placer_state,
     }
     const size_t Nedge = edge_a.size();
     std::vector<int64_t> edge_w(Nedge);
-    for (size_t e = 0; e < Nedge; e++) edge_w[e] = K.base * edge_mult[e]; // WL baseline
     const bool use_lambda = use_timing && K.lambda >= 0.0;   // normalized convex blend
     double WLWmax = 1e-9;
     for (size_t e = 0; e < Nedge; e++) if (edge_wlw[e] > WLWmax) WLWmax = edge_wlw[e];
+    // WL baseline weights: fanout-normalized (edge_wlw rescaled to [1,wmax]) when fanorm is on,
+    // else raw multiplicity. This makes inverse-fanout apply to the WL-only path too, not just
+    // the timing blend. When timing is on, reweight() overwrites edge_w before the first gather.
+    if (K.fanorm) {
+        double scale = (double)K.wmax / WLWmax;
+        for (size_t e = 0; e < Nedge; e++) { int64_t w = (int64_t)(edge_wlw[e] * scale + 0.5); edge_w[e] = w < 1 ? 1 : w; }
+    } else {
+        for (size_t e = 0; e < Nedge; e++) edge_w[e] = K.base * edge_mult[e];
+    }
     std::vector<double> edge_mc, edge_fw;                    // scratch for the blend
     if (use_lambda) { edge_mc.assign(Nedge, 0.0); edge_fw.assign(Nedge, 0.0); }
 
@@ -420,8 +428,10 @@ void run_systolic(PlacerState& placer_state,
         {
         if (ovf) VTR_LOG("[systolic] WARNING: int32 slot-state overflow at update %ld — widen SlotState or lower WMAX\n", u);
         t_gather += omp_get_wtime() - _p0;
-        if (use_lambda && u == 0) {
-            // scale-invariant hot start: temp = melt * mean|dC| over all candidate pairs
+        if (metro && u == 0) {
+            // scale-invariant hot start: temp = melt * mean|dC| over all candidate pairs.
+            // Gated on `metro` (not timing) so WL-only metro is also scale-invariant, not stuck
+            // at the fixed temp0 (which can be mis-scaled vs a large design's WL cost).
             double sd = 0.0; long cnt = 0;
             for (int p = 0; p < 4; p++) {
                 const bool horiz = (p == 0 || p == 2);
