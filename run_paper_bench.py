@@ -20,7 +20,8 @@ all WL-only until 'full'), driven purely by env knobs:
   metro    : MODE=metro  CRIT=0 FANORM=0                        + adaptive schedule & Metropolis accept
   timing   : MODE=metro  CRIT=1 FANORM=0                        + timing-driven (STA)
   full     : MODE=metro  CRIT=1 FANORM=1                        + inverse-fanout WL weight (free) [default]
-  vtr      : VPR criticality_timing, same fixed IO             (baseline comparator)
+  vtr      : VPR criticality_timing, same fixed IO             (timing-driven comparator)
+  vtr_bb   : VPR bounding_box + bounding_box quench, same IO   (wirelength-only comparator)
 Note: inverse-fanout is a timing-coupled refinement (frees the WL term from high-fanout
 non-critical nets so criticality can tighten critical paths) -- cleanest as the last rung.
 
@@ -137,9 +138,11 @@ def main():
     ap.add_argument("--which", choices=["all", "small", "large"], default="all")
     ap.add_argument("--benchmarks", nargs="*", default=None, help="subset by name (no .blif)")
     ap.add_argument("--configs", default=None,
-                    help="comma list from {baseline,metro,fanout,full,vtr} (default: full)")
+                    help="comma list from {baseline,metro,timing,full,vtr,vtr_bb} (default: full)")
     ap.add_argument("--ablation", action="store_true", help="run the full systolic ladder")
-    ap.add_argument("--vtr", action="store_true", help="also run the VTR-timing comparator")
+    ap.add_argument("--vtr", action="store_true", help="also run the VTR timing-driven comparator")
+    ap.add_argument("--vtr-bb", dest="vtr_bb", action="store_true",
+                    help="also run the VTR bounding-box comparator (bounding_box place + quench)")
     ap.add_argument("--workdir", default=f"{ROOT}/soft_systolic_placer/bench_work")
     ap.add_argument("--out", default=None, help="CSV path (default <workdir>/results.csv)")
     ap.add_argument("--keep", action="store_true", help="keep VTR products + rr-graph caches (debug)")
@@ -154,7 +157,7 @@ def main():
     if args.configs:
         configs = [c.strip() for c in args.configs.split(",") if c.strip()]
     else:
-        configs = (LADDER if args.ablation else ["full"]) + (["vtr"] if args.vtr else [])
+        configs = (LADDER if args.ablation else ["full"]) + (["vtr"] if args.vtr else []) + (["vtr_bb"] if args.vtr_bb else [])
     print(f"vpr = {VPR}\nconfigs = {configs}", flush=True)
 
     os.makedirs(args.workdir, exist_ok=True)
@@ -222,7 +225,9 @@ def main():
 
             # ---- 2. configs x seeds ----
             for cfg in configs:
-                is_vtr = (cfg == "vtr")
+                is_vtr = cfg.startswith("vtr")
+                vtr_algo = (["--place_algorithm", "bounding_box", "--place_quench_algorithm", "bounding_box"]
+                            if cfg == "vtr_bb" else ["--place_algorithm", "criticality_timing"])
                 fmaxes, wls, ptimes = [], [], []
                 for seed in range(args.runs):
                     tag = f"{cfg}_s{seed}"
@@ -231,7 +236,7 @@ def main():
                     try:
                         if is_vtr:
                             sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net", "--place",
-                                "--place_algorithm", "criticality_timing", "--fix_clusters", "io.place",
+                                *vtr_algo, "--fix_clusters", "io.place",
                                 "--seed", str(seed + 1), "--place_file", pf, *pc_read, *J], plog, w, timeout=args.timeout)
                             row["place_time_s"] = _grep(r"# Placement took ([\d.]+) seconds", open(plog).read())
                         else:
