@@ -13,17 +13,19 @@ For each benchmark (at its page size + per-benchmark channel width), run seriall
        b. route at the benchmark channel width
        c. record placement time + routed WL + Fmax/CPD, then delete the run's products
 
-Ablation ladder (each rung adds one improvement over the paper's baseline accelerator;
-all WL-only until 'full'), driven purely by env knobs:
+Configs (systolic knobs via env; vtr* are VPR comparators). Ablation ladder = baseline..full:
 
-  baseline : MODE=fixed  CRIT=0 FANORM=0  (+paper SWPS/UPDTS)  fixed linear-cool schedule
+  baseline : MODE=fixed  CRIT=0 FANORM=0  (+paper SWPS/UPDTS)  fixed linear-cool schedule (the PAPER config)
   metro    : MODE=metro  CRIT=0 FANORM=0                        + adaptive schedule & Metropolis accept
   timing   : MODE=metro  CRIT=1 FANORM=0                        + timing-driven (STA)
-  full     : MODE=metro  CRIT=1 FANORM=1                        + inverse-fanout WL weight (free) [default]
+  full     : MODE=metro  CRIT=1 FANORM=1                        + inverse-fanout WL weight [default]
+  tuned    : MODE=fixed 50/100  CRIT=1 FANORM=0 CRIT_EXP=1 LAMBDA=0.1   (Koios-motivated; see KOIOS_FMAX_FINDINGS.md)
+  soph     : MODE=metro CRIT=1 FANORM=1 CRIT_EXP=1 LAMBDA=0.5 CADENCE=10 + VPREXP ramp 1->8 (full timing stack;
+             needs the rebuilt VPR with the crit_exponent fix; beat the paper baseline ~+18% Fmax)
   vtr      : VPR criticality_timing, same fixed IO             (timing-driven comparator)
   vtr_bb   : VPR bounding_box + bounding_box quench, same IO   (wirelength-only comparator)
-Note: inverse-fanout is a timing-coupled refinement (frees the WL term from high-fanout
-non-critical nets so criticality can tighten critical paths) -- cleanest as the last rung.
+Note: 'soph' requires the rebuilt vpr (crit_exponent default 1.0 + cadence delay-refresh + exponent ramp
+in placer.cpp/systolic_placer.cpp); against an unmodified vpr its timing knobs have no effect.
 
 place_time_s is the reported placement time: for systolic it is sys_total_s (time inside
 run_systolic: STA + weighting + annealing + setup/writeback -- "how long the accelerator
@@ -155,7 +157,9 @@ def main():
     ap.add_argument("--which", choices=["all", "small", "large"], default="all")
     ap.add_argument("--benchmarks", nargs="*", default=None, help="subset by name (no .blif)")
     ap.add_argument("--configs", default=None,
-                    help="comma list from {baseline,metro,timing,full,vtr,vtr_bb} (default: full)")
+                    help="comma list from {baseline,metro,timing,full,tuned,soph,vtr,vtr_bb} (default: full). "
+                         "'soph' = full timing stack (needs rebuilt vpr); 'baseline' = the paper config. "
+                         "e.g. --configs baseline,soph,vtr")
     ap.add_argument("--ablation", action="store_true", help="run the full systolic ladder")
     ap.add_argument("--vtr", action="store_true", help="also run the VTR timing-driven comparator")
     ap.add_argument("--vtr-bb", dest="vtr_bb", action="store_true",
