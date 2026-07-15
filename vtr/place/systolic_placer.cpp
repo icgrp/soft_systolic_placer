@@ -10,6 +10,7 @@
 #include "place_delay_model.h"
 #include "timing/PlacerCriticalities.h"
 #include "timing/place_timing_update.h"
+#include "NetPinTimingInvalidator.h"
 
 #include <vector>
 #include <string>
@@ -33,6 +34,8 @@ struct Knobs {
     long   temp0 = 65535;
     int    creep = 95;
     int    stall_lim = 12;
+    int    hold = 1;               // metro: hold temp for this many gathers/updates before one cooling step
+                                   // (equilibrate at each temperature; pbad accumulated over the window)
     int    threads = 0;
     bool   use_crit = true;         // weight edges by timing criticality
     double cscale = 8.0;            // criticality weight scale
@@ -46,6 +49,13 @@ struct Knobs {
     long   wmax = 1000;            // rescale target: max integer edge weight after blend
     double melt = 20.0;            // initial temp = melt * mean|dC| (scale-invariant hot start)
     bool   fanorm = true;          // fanout-normalize WL weight: each connection *= 1/(pins-1)
+    // (tested criticality-gated fanorm: apply 1/F only to low-crit edges. Failed on 2/3 Koios designs
+    //  because the STA flags the routed-critical high-fanout nets as near-zero crit, so the gate
+    //  down-weights them anyway. fanorm-off — protect ALL high-fanout nets — is more robust. Reverted.)
+    bool   smoothtemp = false;     // fixed sched: linear temp ramp to 0 (no big final jump) vs integer dec.
+                                   // Needed to scale up swps/updts (the integer dec's residual grows with
+                                   // step count -> big skip/under-anneal). Off by default (byte-identical).
+                                   // Fmax gain is modest/design-dependent/noisy; a tfloor variant didn't help.
     long   seed = 0;               // per-run RNG offset; 0 = canonical (bit-identical to hardware)
 };
 
@@ -57,6 +67,7 @@ Knobs read_knobs() {
     k.temp0     = envl("SYSTOLIC_TEMP", k.temp0);
     k.creep     = (int)envl("SYSTOLIC_CREEP", k.creep);
     k.stall_lim = (int)envl("SYSTOLIC_STALL", k.stall_lim);
+    k.hold      = (int)envl("SYSTOLIC_HOLD", k.hold);
     k.threads   = (int)envl("SYSTOLIC_THREADS", k.threads);
     k.use_crit  = envl("SYSTOLIC_CRIT", 1) != 0;
     k.cscale    = envd("SYSTOLIC_CSCALE", k.cscale);
@@ -68,6 +79,7 @@ Knobs read_knobs() {
     k.wmax      = envl("SYSTOLIC_WMAX", k.wmax);
     k.melt      = envd("SYSTOLIC_MELT", k.melt);
     k.fanorm    = envl("SYSTOLIC_FANORM", 1) != 0;
+    k.smoothtemp = envl("SYSTOLIC_SMOOTHTEMP", 0) != 0;
     k.seed      = envl("SYSTOLIC_SEED", k.seed);
     return k;
 }
@@ -93,6 +105,13 @@ void run_systolic(PlacerState& placer_state,
     const Knobs K = read_knobs();
     if (K.threads > 0) omp_set_num_threads(K.threads);
     const bool use_timing = K.use_crit && criticalities != nullptr && delay_model != nullptr;
+    // Mutable crit_params so we can RAMP the VPR criticality exponent over the anneal (VTR-style, 1->8),
+    // applied at each cadence STA refresh. SYSTOLIC_VPREXP_RAMP=1 enables; FIRST/LAST set the endpoints.
+    PlaceCritParams cp = crit_params;
+    const bool   vpre_ramp  = std::getenv("SYSTOLIC_VPREXP_RAMP") && atoi(std::getenv("SYSTOLIC_VPREXP_RAMP"));
+    const double vpre_first = std::getenv("SYSTOLIC_VPREXP_FIRST") ? atof(std::getenv("SYSTOLIC_VPREXP_FIRST")) : 1.0;
+    const double vpre_last  = std::getenv("SYSTOLIC_VPREXP_LAST")  ? atof(std::getenv("SYSTOLIC_VPREXP_LAST"))  : 8.0;
+    long temp0_ramp = K.temp0;   // reference temp for ramp progress (updated after melt at u==0)
     double t_start = omp_get_wtime();
 
     auto& cluster_ctx = g_vpr_ctx.clustering();
@@ -201,6 +220,7 @@ void run_systolic(PlacerState& placer_state,
         if (clb.net_is_ignored(net)) continue;   // skip global (clock/reset) nets
         int F = (int)clb.net_sinks(net).size();                 // #sinks = pins-1
         double fw = (K.fanorm && F > 1) ? 1.0 / (double)F : 1.0; // 1/(pins-1) star normalization
+        // (tested a softer 1/F^fanexp, fanexp in [0,1]: fanorm OFF always won, monotonically — reverted.)
         ClusterBlockId d = clb.pin_block(clb.net_driver(net));
         int ipin = 1;
         for (auto sp : clb.net_sinks(net)) {
@@ -343,9 +363,11 @@ void run_systolic(PlacerState& placer_state,
     const bool metro = (K.mode == "metro");
     long temp = K.temp0, dec = 0, thr = 0;
     if (fixed_sched) { long steps = K.updts * K.swps - 1; dec = steps > 0 ? temp / steps : 0; thr = steps > 0 ? temp - dec * (steps - 1) : 0; }
+    const long Nsteps = K.updts * K.swps;   // fixed sched: total phase-steps (=temp decrements)
+    long sstep = 0;                          // smoothtemp: steps taken so far (drives linear ramp to 0)
     int phase = 0;
     int64_t best_cost = -1;
-    int stall = 0, used_updates = 0, n_sta = 0;
+    int stall = 0, used_updates = 0, n_sta = 0, hold_ctr = 0;
     const double COST_EPS = 1e-3, MELT_A = 0.80;
     const long TEMP_FLOOR = metro ? 1 : 100;
     double t_sync = 0, t_sta = 0, t_rw = 0, t_place = 0;   // runtime breakdown
@@ -353,6 +375,7 @@ void run_systolic(PlacerState& placer_state,
 
     // Shared state for the persistent parallel region (declared once, outside).
     int64_t cost = 0; long naccept = 0, nbadatt = 0, nbadacc = 0; int ovf = 0;
+    long long nmoves = 0;   // TEMP: exact count of pairwise move evaluations
     double invTscaled = 0.0, _p0 = 0.0, _ps = 0.0;
     bool done = false;
     // Persistent OpenMP team: fork ONCE for the whole anneal (not per phase). Parallel
@@ -369,7 +392,26 @@ void run_systolic(PlacerState& placer_state,
         if (use_timing && (u == 0 || (K.cadence > 0 && u % K.cadence == 0))) {
             double _ta = omp_get_wtime(); sync_to_vpr();
             double _tb = omp_get_wtime(); t_sync += _tb - _ta;
-            perform_full_timing_update(crit_params, delay_model, criticalities, setup_slacks,
+            // For a true cadence refresh (u>0), recompute connection delays from the CURRENT placement
+            // and invalidate all sink pins, so perform_full_timing_update's incremental STA actually
+            // re-propagates (our swaps bypass VPR's move machinery, so nothing is marked changed).
+            // Without this, cadence>0 is a no-op (frozen initial-placement criticalities). Gated on u>0
+            // so cadence=0 (default) stays byte-identical to VPR's initial timing state.
+            if (u > 0) {
+                comp_td_connection_delays(delay_model, placer_state);
+                if (pin_timing_invalidator)
+                    for (auto net_id : clb.nets())
+                        for (auto pin_id : clb.net_sinks(net_id))
+                            pin_timing_invalidator->invalidate_connection(pin_id);
+            }
+            if (vpre_ramp) {   // VTR-style: ramp criticality exponent first->last as temp cools
+                double denom = std::log((double)temp0_ramp);
+                double prog = (u == 0 || denom <= 0) ? 0.0
+                            : (denom - std::log((double)(temp > 1 ? temp : 1))) / denom;
+                prog = prog < 0 ? 0 : (prog > 1 ? 1 : prog);
+                cp.crit_exponent = (float)(vpre_first + prog * (vpre_last - vpre_first));
+            }
+            perform_full_timing_update(cp, delay_model, criticalities, setup_slacks,
                                        pin_timing_invalidator, timing_info, costs, placer_state);
             double _tc = omp_get_wtime(); t_sta += _tc - _tb;
             reweight();
@@ -452,7 +494,9 @@ void run_systolic(PlacerState& placer_state,
             temp = (long)(K.melt * mean); if (temp < 1) temp = 1;
             if (fixed_sched) { long steps = K.updts*K.swps - 1; dec = steps>0?temp/steps:0; thr = steps>0?temp-dec*(steps-1):0; }
         }
-        naccept = 0; nbadatt = 0; nbadacc = 0;
+        naccept = 0;
+        if (hold_ctr == 0) { nbadatt = 0; nbadacc = 0; }   // accumulate bad-counts across the hold window
+        if (u == 0) temp0_ramp = (temp > 1 ? temp : 2);    // reference temp for the exponent ramp
         invTscaled = (temp > 0) ? (double)LUT_SCALE / (double)temp : 0.0;   // temp const within a metro update
         _ps = omp_get_wtime();
         } // end single: gather timing + melt + reset
@@ -499,7 +543,13 @@ void run_systolic(PlacerState& placer_state,
                 rng[s] = ((v << 1) | fb) & 0xFFFF;
             }
             #pragma omp single
-            { phase = (phase + 1) % 4; if (fixed_sched) temp = (temp > thr) ? temp - dec : 0; }
+            { phase = (phase + 1) % 4; nmoves += np;
+              if (fixed_sched) {
+                  if (K.smoothtemp)   // linear ramp temp0 -> 0 over Nsteps, max drop ~ceil(temp0/N), no jump
+                      temp = Nsteps > 0 ? (long)((int64_t)K.temp0 * (Nsteps - (++sstep)) / Nsteps) : 0;
+                  else                // legacy integer decrement (large residual jump at the end)
+                      temp = (temp > thr) ? temp - dec : 0;
+              } }
         }
 
         #pragma omp single
@@ -509,7 +559,7 @@ void run_systolic(PlacerState& placer_state,
             used_updates = (int)u + 1;
             if (fixed_sched) {
                 if (best_cost < 0 || cost < best_cost) best_cost = cost;
-            } else {
+            } else if (++hold_ctr >= K.hold) {   // hold temp for K gathers before cooling (equilibrate; pbad over the window)
                 double pbad = nbadatt > 0 ? (double)nbadacc / (double)nbadatt : 0.0;
                 if      (pbad > 0.96) temp = temp / 2;
                 else if (pbad > MELT_A) temp = (temp * 9) / 10;
@@ -519,6 +569,7 @@ void run_systolic(PlacerState& placer_state,
                     else stall++;
                 }
                 if (stall >= K.stall_lim || temp <= TEMP_FLOOR) done = true;
+                hold_ctr = 0;
             }
         }
         (void)naccept;
@@ -527,10 +578,20 @@ void run_systolic(PlacerState& placer_state,
 
     // ---- write final locations back into VPR placement state --------------------
     sync_to_vpr();
+    // Refresh connection delays from the FINAL placement and invalidate all sink pins, so VPR's
+    // post-placement timing analysis (the reported "Placement estimated CPD/Fmax") reflects the actual
+    // final placement instead of the stale initial-placement delays. Placement itself is unchanged.
+    if (use_timing && pin_timing_invalidator) {
+        comp_td_connection_delays(delay_model, placer_state);
+        for (auto net_id : clb.nets())
+            for (auto pin_id : clb.net_sinks(net_id))
+                pin_timing_invalidator->invalidate_connection(pin_id);
+    }
     if (created_cgrids) vtr::release_memory(place_ctx.compressed_block_grids);
 
     double t_total = omp_get_wtime() - t_start;
     double t_other = t_total - t_place - t_sta - t_sync - t_rw;   // setup (adjacency) + writeback
+    VTR_LOG("[systolic] TEMP move evals = %lld\n", nmoves);
     VTR_LOG("[systolic] mode=%s crit=%d slots=%zu blocks=%zu edges=%zu updates=%d STA=%d cost=%ld  %.4f s\n",
             K.mode.c_str(), (int)use_timing, Nslot, Nblk, Nedge, used_updates, n_sta, (long)best_cost, t_total);
     VTR_LOG("[systolic] time: place %.4fs (%.0f%%) | STA %.4fs (%.0f%%) | sync %.4fs (%.0f%%) | reweight %.4fs (%.0f%%) | setup+writeback %.4fs (%.0f%%)\n",

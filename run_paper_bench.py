@@ -33,7 +33,7 @@ convention as the paper. All seed values are written to CSV; medians are printed
 Runs execute one at a time (no contention). --workers = VPR -j (packing/STA/routing).
 Env overrides: SELF_HOSTED_ROOT, VPR, VPR_NUM_WORKERS.
 """
-import os, re, time, csv, argparse, shutil, subprocess, statistics
+import os, re, time, csv, argparse, shutil, subprocess, statistics, filecmp
 
 ROOT     = os.environ.get("SELF_HOSTED_ROOT", "/home/ethomas/research/internship/self_hosted_placement")
 VPR      = os.environ.get("VPR", f"{ROOT}/vtr-verilog-to-routing/build/vpr/vpr")
@@ -43,7 +43,7 @@ TPL      = f"{PP}/vtr_integration/arch/heterogeneous_k10.xml"
 SYNTH    = f"{ROOT}/soft_systolic_placer/synth"
 PARAMS   = f"{ROOT}/soft_systolic_placer/experiment_params.txt"
 
-CSV_FIELDS = ["bench", "config", "seed", "W", "H", "cw",
+CSV_FIELDS = ["bench", "config", "seed", "W", "H", "cw", "threads",
               "place_time_s",     # systolic: sys_total_s | vtr: VPR "# Placement took"
               "sys_place_core_s", # systolic annealing only (blank for vtr)
               "sys_sta_s",        # systolic initial STA (blank for vtr)
@@ -61,6 +61,20 @@ def sys_env(cfg):
         "metro":    {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 0, "SYSTOLIC_FANORM": 0},
         "timing":   {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0},
         "full":     {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1},
+        # recommended config from the Koios Fmax study (see KOIOS_FMAX_FINDINGS.md): fixed 50x100
+        # schedule, timing on but crit_exp=1 (linear, not squared) + lambda=0.1 (heavy timing weight),
+        # fanorm OFF. Strictly better than "full" on both Koios and classic arm_core.
+        "tuned":    {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.1,
+                     "SYSTOLIC_SWPS": 50, "SYSTOLIC_UPDTS": 100},
+        # "soph": full timing stack developed after the crit_exponent interface-bug fix. Metro schedule,
+        # timing on, fanorm on, criticality re-STA'd every 10 updates (CADENCE), with the VPR criticality
+        # exponent RAMPED 1->8 over the anneal (VTR-style) and our reweight exp held at 1, lambda=0.5.
+        # Requires the rebuilt VPR (VPREXP default 1.0 + cadence delay-refresh + exponent ramp). Beat the
+        # paper WL-only baseline by ~+18% Fmax (same-setup, 8 designs). See crit-exponent-interface-bug memo.
+        "soph":     {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
     }[cfg]
 
 
@@ -79,7 +93,10 @@ def read_params(path):
             cur["SW"], cur["UP"] = int(m.group(1)), int(m.group(2))  # paper fixed schedule (baseline rung)
         else:
             b, cw = line.split(",")
-            cur["bench"].append((b.strip(), int(cw)))
+            b = b.strip()
+            if not b.endswith(".blif"):   # koios params list names without the suffix
+                b += ".blif"
+            cur["bench"].append((b, int(cw)))
     return groups
 
 
@@ -149,16 +166,24 @@ def main():
     ap.add_argument("--timeout", type=int, default=10800)
     ap.add_argument("--vpr", default=VPR, help="path to the vpr binary with the systolic placer")
     ap.add_argument("--systolic-threads", type=int, default=1, help="SYSTOLIC_THREADS for the systolic placer")
+    ap.add_argument("--systolic-thread-sweep", dest="thread_sweep", default=None,
+                    help="comma list of SYSTOLIC_THREADS to sweep for systolic configs, e.g. 1,2,4,8. "
+                         "Placement is thread-invariant, so each seed is placed once per T (anneal scaling, "
+                         "-j fixed at --workers) but ROUTED ONCE; placements are verified byte-identical across T.")
     ap.add_argument("--no-cache", dest="cache", action="store_false", help="disable rr-graph/delay-lookup caching")
+    ap.add_argument("--params", default=PARAMS, help="benchmark params file (page size + per-benchmark cw)")
+    ap.add_argument("--synth", default=SYNTH, help="directory containing the .blif files")
     args = ap.parse_args()
     VPR = args.vpr
     args.workdir = os.path.abspath(args.workdir)  # VPR runs with cwd=benchmark dir -> paths must be absolute
+    args.params, args.synth = os.path.abspath(args.params), os.path.abspath(args.synth)
 
     if args.configs:
         configs = [c.strip() for c in args.configs.split(",") if c.strip()]
     else:
         configs = (LADDER if args.ablation else ["full"]) + (["vtr"] if args.vtr else []) + (["vtr_bb"] if args.vtr_bb else [])
-    print(f"vpr = {VPR}\nconfigs = {configs}", flush=True)
+    SWEEP = [int(x) for x in args.thread_sweep.split(",") if x.strip()] if args.thread_sweep else None
+    print(f"vpr = {VPR}\nconfigs = {configs}" + (f"\nthread sweep = {SWEEP}" if SWEEP else ""), flush=True)
 
     os.makedirs(args.workdir, exist_ok=True)
     cache = f"{args.workdir}/_cache"
@@ -174,14 +199,14 @@ def main():
     if new:
         wr.writeheader(); csvf.flush()
 
-    for gi, g in enumerate(read_params(PARAMS)):
+    for gi, g in enumerate(read_params(args.params)):
         if args.which == "small" and gi != 0: continue
         if args.which == "large" and gi != 1: continue
         W, H, SW, UP = g["W"], g["H"], g["SW"], g["UP"]
         for bench, cw in g["bench"]:
             name = bench[:-5] if bench.endswith(".blif") else bench
             if args.benchmarks and name not in args.benchmarks: continue
-            blif = f"{SYNTH}/{bench}"
+            blif = f"{args.synth}/{bench}"
             if not os.path.exists(blif):
                 print(f"[skip] {name}: no blif at {blif}", flush=True); continue
             w = f"{args.workdir}/{name}"
@@ -228,41 +253,73 @@ def main():
                 is_vtr = cfg.startswith("vtr")
                 vtr_algo = (["--place_algorithm", "bounding_box", "--place_quench_algorithm", "bounding_box"]
                             if cfg == "vtr_bb" else ["--place_algorithm", "criticality_timing"])
-                fmaxes, wls, ptimes = [], [], []
+                # systolic thread counts to sweep (placement is thread-invariant -> route once per seed).
+                # vtr never sweeps: its parallelism is -j workers, not SYSTOLIC_THREADS.
+                tlist = (SWEEP if (SWEEP and not is_vtr) else [args.systolic_threads])
+                fmaxes, wls = [], []
+                ptimes = {t: [] for t in tlist}   # place_time per thread count
                 for seed in range(args.runs):
-                    tag = f"{cfg}_s{seed}"
-                    pf, plog, rlog = f"{w}/{tag}.place", f"{w}/pl_{tag}.log", f"{w}/rt_{tag}.log"
-                    row = {"bench": name, "config": cfg, "seed": seed, "W": W, "H": H, "cw": cw}
+                    # per-T placement results; route ONCE (placement identical across T)
+                    ptime, core, sta = {}, {}, {}
+                    route_pf = None
                     try:
                         if is_vtr:
+                            pf, plog = f"{w}/{cfg}_s{seed}.place", f"{w}/pl_{cfg}_s{seed}.log"
                             sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net", "--place",
                                 *vtr_algo, "--fix_clusters", "io.place",
                                 "--seed", str(seed + 1), "--place_file", pf, *pc_read, *J], plog, w, timeout=args.timeout)
-                            row["place_time_s"] = _grep(r"# Placement took ([\d.]+) seconds", open(plog).read())
+                            T0 = tlist[0]
+                            ptime[T0] = _grep(r"# Placement took ([\d.]+) seconds", open(plog).read())
+                            route_pf = pf
                         else:
-                            env = {"SYSTOLIC_SEED": seed, "SYSTOLIC_THREADS": args.systolic_threads}
-                            env.update(sys_env(cfg))
-                            if env["SYSTOLIC_MODE"] == "fixed":   # paper fixed schedule (baseline + fanout rungs)
-                                env["SYSTOLIC_SWPS"], env["SYSTOLIC_UPDTS"] = SW, UP
-                            sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net", "--place",
-                                "--place_algorithm", "systolic", "--fix_clusters", "io.place",
-                                "--place_file", pf, *pc_read, *J], plog, w, env=env, timeout=args.timeout)
-                            row["place_time_s"], row["sys_place_core_s"], row["sys_sta_s"] = parse_systolic(open(plog).read())
+                            for T in tlist:   # anneal threads scale; -j (STA) held at --workers
+                                pf, plog = f"{w}/{cfg}_s{seed}_t{T}.place", f"{w}/pl_{cfg}_s{seed}_t{T}.log"
+                                env = {"SYSTOLIC_SEED": seed, "SYSTOLIC_THREADS": T}
+                                env.update(sys_env(cfg))
+                                if env["SYSTOLIC_MODE"] == "fixed" and "SYSTOLIC_SWPS" not in env:
+                                    env["SYSTOLIC_SWPS"], env["SYSTOLIC_UPDTS"] = SW, UP   # paper fixed schedule (baseline)
+                                sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net", "--place",
+                                    "--place_algorithm", "systolic", "--fix_clusters", "io.place",
+                                    "--place_file", pf, *pc_read, *J], plog, w, env=env, timeout=args.timeout)
+                                ptime[T], core[T], sta[T] = parse_systolic(open(plog).read())
+                                if route_pf is None:
+                                    route_pf = pf
+                                elif not filecmp.cmp(pf, route_pf, shallow=False):
+                                    print(f"    WARN: {cfg} s{seed}: placement at t{T} differs from t{tlist[0]} "
+                                          f"(NOT thread-invariant!)", flush=True)
+                        # ---- route ONCE; reuse Fmax/WL across all thread counts ----
+                        rlog = f"{w}/rt_{cfg}_s{seed}.log"
                         rc_ = (["--read_rr_graph", rrt] if args.cache and os.path.exists(rrt)
                                else (["--write_rr_graph", rrt] if args.cache else []))
-                        _, row["route_wall_s"] = sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net",
-                                                     "--place_file", pf, "--route", "--route_chan_width", str(cw), *rc_, *J],
-                                                    rlog, w, timeout=args.timeout)
-                        row["routed_ok"], row["wl"], row["cpd_ns"], row["fmax_mhz"] = parse_route(open(rlog).read())
+                        _, route_wall = sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net",
+                                            "--place_file", route_pf, "--route", "--route_chan_width", str(cw), *rc_, *J],
+                                           rlog, w, timeout=args.timeout)
+                        routed_ok, wl, cpd, fmax = parse_route(open(rlog).read())
+                        if fmax: fmaxes.append(fmax)
+                        if wl: wls.append(wl)
+                        for T in tlist:
+                            wr.writerow({"bench": name, "config": cfg, "seed": seed, "W": W, "H": H, "cw": cw,
+                                         "threads": (args.workers if is_vtr else T),
+                                         "place_time_s": ptime.get(T),
+                                         "sys_place_core_s": (None if is_vtr else core.get(T)),
+                                         "sys_sta_s": (None if is_vtr else sta.get(T)),
+                                         "route_wall_s": route_wall, "routed_ok": routed_ok,
+                                         "wl": wl, "cpd_ns": cpd, "fmax_mhz": fmax})
+                            if ptime.get(T): ptimes[T].append(ptime[T])
+                        csvf.flush()
                     except Exception as ex:
-                        row["error"] = type(ex).__name__
-                    wr.writerow(row); csvf.flush()
-                    if row.get("fmax_mhz"): fmaxes.append(row["fmax_mhz"])
-                    if row.get("wl"): wls.append(row["wl"])
-                    if row.get("place_time_s"): ptimes.append(row["place_time_s"])
+                        wr.writerow({"bench": name, "config": cfg, "seed": seed, "W": W, "H": H,
+                                     "cw": cw, "error": type(ex).__name__}); csvf.flush()
                     if not args.keep: clean_run(w, keepset)
-                print(f"    {cfg:9s}: median Fmax {_median(fmaxes):7.2f} MHz | median WL {_median(wls):9.0f} | "
-                      f"median place {_median(ptimes):.4f}s  (n={len(fmaxes)})", flush=True)
+                if len(tlist) > 1:   # thread-sweep: one line per T (Fmax/WL constant across T)
+                    print(f"    {cfg:9s}: median Fmax {_median(fmaxes):7.2f} MHz | median WL {_median(wls):9.0f} "
+                          f"(n={len(fmaxes)})", flush=True)
+                    for T in tlist:
+                        print(f"      t{T:<3d}: median place {_median(ptimes[T]):.4f}s", flush=True)
+                else:
+                    T = tlist[0]
+                    print(f"    {cfg:9s}: median Fmax {_median(fmaxes):7.2f} MHz | median WL {_median(wls):9.0f} | "
+                          f"median place {_median(ptimes[T]):.4f}s  (n={len(fmaxes)})", flush=True)
 
             if not args.keep:
                 shutil.rmtree(w, ignore_errors=True)

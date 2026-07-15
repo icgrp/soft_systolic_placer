@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <utility>
+#include <cstdlib>
 
 #include "echo_files.h"
 #include "flat_placement_types.h"
@@ -318,7 +319,12 @@ void Placer::place() {
         // It recomputes timing criticalities from real STA on a cadence, so it
         // needs the delay model / criticalities / timing objects.
         PlaceCritParams crit_params;
-        crit_params.crit_exponent = placer_opts_.td_place_exp_last;
+        // VPR raises raw criticality to crit_exponent (PlacerCriticalities). VPR's annealer RAMPS this
+        // 1->8 over the anneal; pinning it at td_place_exp_last(=8) for the whole run over-sharpens the
+        // criticality to ~0 for all but the worst nets (and our reweight exponentiates again). Default to
+        // 1.0 (raw criticality) so our SYSTOLIC_CRIT_EXP does the shaping; overridable via SYSTOLIC_VPREXP.
+        crit_params.crit_exponent = std::getenv("SYSTOLIC_VPREXP") ? (float)atof(std::getenv("SYSTOLIC_VPREXP"))
+                                                                   : 1.0f;
         crit_params.crit_limit = placer_opts_.place_crit_limit;
         run_systolic(placer_state_, place_delay_model_.get(), placer_criticalities_.get(),
                      placer_setup_slacks_.get(), pin_timing_invalidator_.get(),
