@@ -77,6 +77,153 @@ def sys_env(cfg):
         "soph":     {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1,
                      "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
                      "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        # soph but exponent ramp 1->4 (vs soph's 1->8), fanorm kept ON. Tests whether the gentler
+        # exponent protects near-critical high-fanout nets (crit term) while keeping fanorm's WL benefit
+        # (WL term) -- the untested fanorm-on x exp4 corner.
+        "soph_exp4": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 4},
+        # soph with fanorm OFF and exponent ramp 1->4 (else identical to soph: hold 1, swps 10). The
+        # clean "best corner" candidate -- differs from soph in exactly fanorm-off + exp4.
+        "soph_nofan_exp4": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 4},
+        # lambda sweep on the tuned base (soph8_nofan_exp4 = lambda 0.5): higher lambda = more WL weight in the
+        # blend l*(WL)+(1-l)*crit -> targets the systematic ~1.22x WL gap. Compare vs soph8_nofan_exp4 (l=0.5)
+        # + vtr already in cluster/res_*.csv.
+        "soph8_nofan_lam60": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.6, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 4, "SYSTOLIC_HOLD": 8},
+        "soph8_nofan_lam70": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 4, "SYSTOLIC_HOLD": 8},
+        "soph8_nofan_lam80": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 4, "SYSTOLIC_HOLD": 8},
+        # lambda sweep: soph base (fanorm on, exp8, hold1), only SYSTOLIC_LAMBDA varies. Higher lambda =
+        # more WL weight in the blend l*(WL) + (1-l)*(crit) -- probing whether WL (our weak metric, ~1.21x)
+        # improves with little Fmax cost. soph itself is lambda=0.5.
+        "soph_lam03": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.3, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        "soph_lam07": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        "soph_lam09": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.9, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        # cadence sweep: soph base, only SYSTOLIC_CADENCE (STA-refresh interval, in updates) varies.
+        # soph itself is cadence=10. Larger cadence = fewer STA calls = faster (STA is 84-94% of large-
+        # design time); tests how few refreshes preserve Fmax (criticality is ~placement-stable).
+        "soph_cad20":  {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 20, "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        "soph_cad30":  {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 30, "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        "soph_cad50":  {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 50, "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        "soph_cad100": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 100, "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        # per-connection criticality-gated fanorm (idea #1-fixed): critical connections (raw crit > THR) keep
+        # FULL WL weight, others fanorm'd -> restores WL pull to critical wide-net connections without the
+        # fanorm-off bluntness. Fixed 40x100 schedule (same as soph_fx) to avoid the metro plateau confound.
+        "soph_fx": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
+                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
+        "critgate_thr03": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
+                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.3},
+        "critgate_thr05": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
+                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.5},
+        "critgate_thr07": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
+                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        # lambda sweep on the crit-gate base (thr0.7, fixed 40x100): higher lambda = more WL weight, targeting
+        # the ~1.22x WL gap, on the principled gated-fanorm config. lambda=0.5 is critgate_thr07 (in cg_*.csv).
+        "critgate_lam60": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
+                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.6, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        "critgate_lam70": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
+                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        "critgate_lam80": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
+                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        # crit-gate + lambda on the DYNAMIC (metro) schedule with hold=8 (more annealing) -- the deployable path.
+        # Compare vs soph (metro) + vtr already in cluster/res_*.csv. hold=8 also lifts the update count back up,
+        # offsetting critgate's early-plateau churn.
+        "critgate_m_lam50": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        "critgate_m_lam70": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        "critgate_m_lam80": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        # FINAL validation: winning config (metro+hold8+critgate thr0.7+lambda0.7), cadence swept UP to cut STA
+        # from ~109 (cad10) to ~2-3, confirming quality holds. hold8 -> ~1088 updates so these get 2-5 refreshes.
+        "final_c200": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 200, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        "final_c500": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 500, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        "final_c800": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 800, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        # SPEED-FIRST configs targeting >=100x: lean anneal (hold 1/2) + high cadence (100) + free objective
+        # levers (crit-gate + lambda 0.8 for WL). Gives up the hold=8 WL win (incompatible with 100x).
+        "fast_h1": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 100, "SYSTOLIC_HOLD": 1, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        "fast_h2": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 100, "SYSTOLIC_HOLD": 2, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
+        # fast_h1 + progress-tied STA (idea #9): guarantees a mid (~50% log-temp progress) and a late
+        # (on convergence) STA+reweight regardless of update count, instead of relying on cadence=100
+        # landing at least once. Targets fast_h1's dnnweaver routing failure (too few STAs at hold=1).
+        "fast_h1_psta": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 100, "SYSTOLIC_HOLD": 1, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7,
+                     "SYSTOLIC_PSTA": 1},
+        # soph + longer equilibration per temperature (SYSTOLIC_HOLD=8). Motivation: the 200x200 Koios
+        # array has ~4x the slots of the 100x100 paper designs, so hold=1 (cool every update) freezes
+        # too fast; hold=8 equilibrates 8 updates per cooling step. Anneal is ~0.2-0.4s so 8x is still
+        # far under VTR's place time. See crit-exponent-interface-bug / koios findings.
+        "soph8":    {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_HOLD": 8},
+        # soph8 with fanout-norm OFF: isolates whether downweighting high-fanout nets (1/(pins-1)) is
+        # what caps Fmax on big sparse Koios designs. Prior finding: fanorm tanks Fmax on large sparse
+        # pages (0.55->0.81 vs VTR). If Fmax jumps here, fanorm is the culprit.
+        "soph8_nofan": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_HOLD": 8},
+        # soph8_nofan with 40 swaps/update (default is 10). Motivation: the near-critical path analysis
+        # showed soph's connection spans inflate vs VTR and the inflation GROWS with design size
+        # (dnnweaver all-hop span +50%), i.e. global under-convergence. More sweeps per temperature =
+        # more equilibration; test on the big laggers (softmax, dnnweaver).
+        "soph8_nofan_sw40": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
+                     "SYSTOLIC_HOLD": 8, "SYSTOLIC_SWPS": 40},
+        # exponent-ramp endpoint sweep (soph8_nofan base, only VPREXP_LAST changes). Tests whether
+        # ramping VPR crit exponent all the way to 8 crushes near-critical nets (raw_crit^8 ~ 0 below
+        # ~0.95), leaving them un-optimized and Fmax-limiting. Lower endpoints keep near-critical weight.
+        "soph8_nofan_exp4": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 4,
+                     "SYSTOLIC_HOLD": 8},
+        "soph8_nofan_exp2": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 0,
+                     "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
+                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 2,
+                     "SYSTOLIC_HOLD": 8},
     }[cfg]
 
 
@@ -133,6 +280,15 @@ def parse_systolic(text):
     return total, core, sta
 
 
+def parse_place_est(text):
+    # ESTIMATED post-placement timing/WL from the place log (no routing). The end-of-place STA makes
+    # this Fmax accurate to a few % of routed; WL is the BB min-dist estimate (a proxy for routed WL).
+    fmax = _grep(r"Placement estimated critical path delay.*?Fmax:\s*([\d.]+)\s*MHz", text)
+    cpd  = _grep(r"Placement estimated critical path delay \(least slack\):\s*([\d.]+)\s*ns", text)
+    wl   = _grep(r"BB estimate of min-dist \(placement\) wire length:\s*(\d+)", text, int)
+    return ("est" if fmax else None), wl, cpd, fmax
+
+
 def clean_run(workdir, keepset):
     for fn in os.listdir(workdir):
         if fn not in keepset:
@@ -175,6 +331,8 @@ def main():
                          "Placement is thread-invariant, so each seed is placed once per T (anneal scaling, "
                          "-j fixed at --workers) but ROUTED ONCE; placements are verified byte-identical across T.")
     ap.add_argument("--no-cache", dest="cache", action="store_false", help="disable rr-graph/delay-lookup caching")
+    ap.add_argument("--no-route", dest="no_route", action="store_true",
+                    help="skip routing; report placement ESTIMATED Fmax/WL from the place log (fast)")
     ap.add_argument("--params", default=PARAMS, help="benchmark params file (page size + per-benchmark cw)")
     ap.add_argument("--synth", default=SYNTH, help="directory containing the .blif files")
     args = ap.parse_args()
@@ -274,7 +432,7 @@ def main():
                                 "--seed", str(seed + 1), "--place_file", pf, *pc_read, *J], plog, w, timeout=args.timeout)
                             T0 = tlist[0]
                             ptime[T0] = _grep(r"# Placement took ([\d.]+) seconds", open(plog).read())
-                            route_pf = pf
+                            route_pf = pf; route_plog = plog
                         else:
                             for T in tlist:   # anneal threads scale; -j (STA) held at --workers
                                 pf, plog = f"{w}/{cfg}_s{seed}_t{T}.place", f"{w}/pl_{cfg}_s{seed}_t{T}.log"
@@ -287,18 +445,23 @@ def main():
                                     "--place_file", pf, *pc_read, *J], plog, w, env=env, timeout=args.timeout)
                                 ptime[T], core[T], sta[T] = parse_systolic(open(plog).read())
                                 if route_pf is None:
-                                    route_pf = pf
+                                    route_pf = pf; route_plog = plog
                                 elif not filecmp.cmp(pf, route_pf, shallow=False):
                                     print(f"    WARN: {cfg} s{seed}: placement at t{T} differs from t{tlist[0]} "
                                           f"(NOT thread-invariant!)", flush=True)
-                        # ---- route ONCE; reuse Fmax/WL across all thread counts ----
-                        rlog = f"{w}/rt_{cfg}_s{seed}.log"
-                        rc_ = (["--read_rr_graph", rrt] if args.cache and os.path.exists(rrt)
-                               else (["--write_rr_graph", rrt] if args.cache else []))
-                        _, route_wall = sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net",
-                                            "--place_file", route_pf, "--route", "--route_chan_width", str(cw), *rc_, *J],
-                                           rlog, w, timeout=args.timeout)
-                        routed_ok, wl, cpd, fmax = parse_route(open(rlog).read())
+                        if args.no_route:
+                            # skip routing: report placement ESTIMATED Fmax/WL from the place log
+                            routed_ok, wl, cpd, fmax = parse_place_est(open(route_plog).read())
+                            route_wall = 0.0
+                        else:
+                            # ---- route ONCE; reuse Fmax/WL across all thread counts ----
+                            rlog = f"{w}/rt_{cfg}_s{seed}.log"
+                            rc_ = (["--read_rr_graph", rrt] if args.cache and os.path.exists(rrt)
+                                   else (["--write_rr_graph", rrt] if args.cache else []))
+                            _, route_wall = sh([VPR, "systolic.xml", bench, "--net_file", f"{name}.net",
+                                                "--place_file", route_pf, "--route", "--route_chan_width", str(cw), *rc_, *J],
+                                               rlog, w, timeout=args.timeout)
+                            routed_ok, wl, cpd, fmax = parse_route(open(rlog).read())
                         if fmax: fmaxes.append(fmax)
                         if wl: wls.append(wl)
                         for T in tlist:
