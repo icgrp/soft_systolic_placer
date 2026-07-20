@@ -111,6 +111,21 @@ void run_systolic(PlacerState& placer_state,
     const bool   vpre_ramp  = std::getenv("SYSTOLIC_VPREXP_RAMP") && atoi(std::getenv("SYSTOLIC_VPREXP_RAMP"));
     const double vpre_first = std::getenv("SYSTOLIC_VPREXP_FIRST") ? atof(std::getenv("SYSTOLIC_VPREXP_FIRST")) : 1.0;
     const double vpre_last  = std::getenv("SYSTOLIC_VPREXP_LAST")  ? atof(std::getenv("SYSTOLIC_VPREXP_LAST"))  : 8.0;
+    // Per-connection criticality-gated fanorm (SYSTOLIC_CRITGATE): a connection keeps FULL WL weight if it is
+    // critical (raw crit > thr), else it's fanout-normalized (1/(pins-1)). Fixes the asymmetry where fanorm
+    // zeros the WL pull on critical WIDE-net connections (they'd otherwise get only ~half a narrow net's pull).
+    // The gate needs RAW crit (wide nets are crushed at high exp), so VPR crit_exponent is pinned to 1 and the
+    // ramp exponent is applied to the timing term in reweight(). Default off -> byte-identical.
+    const bool   critgate = std::getenv("SYSTOLIC_CRITGATE") && atoi(std::getenv("SYSTOLIC_CRITGATE"));
+    const double critgate_thr = std::getenv("SYSTOLIC_CRITGATE_THR") ? atof(std::getenv("SYSTOLIC_CRITGATE_THR")) : 0.5;
+    // Progress-tied STA (SYSTOLIC_PSTA): fixed update-count cadence is brittle on short/lean (low-hold)
+    // runs -- if total updates < cadence, only the u=0 STA ever fires and the anneal is steered by
+    // stale pre-anneal criticalities the whole time. Instead guarantee a STA+reweight at ~50% log-temp
+    // progress (mid-anneal) and one more right when convergence is first detected (late/near-end),
+    // reusing stall_lim itself as the post-refresh polish window. Off by default (byte-identical).
+    const bool   psta     = std::getenv("SYSTOLIC_PSTA") && atoi(std::getenv("SYSTOLIC_PSTA"));
+    const double psta_mid = std::getenv("SYSTOLIC_PSTA_MID") ? atof(std::getenv("SYSTOLIC_PSTA_MID")) : 0.5;
+    double ramp_exp = vpre_first;   // timing-term exponent (updated each STA when critgate on); read by reweight()
     long temp0_ramp = K.temp0;   // reference temp for ramp progress (updated after melt at u==0)
     double t_start = omp_get_wtime();
 
@@ -315,8 +330,8 @@ void run_systolic(PlacerState& placer_state,
         // Normalized convex blend: w = l*(m/M) + (1-l)*(maxcrit/maxcrit_design)^exp,
         // then rescale all weights so the largest is `wmax` (keeps int resolution;
         // both terms are in [0,1] so raw weights would collapse to 0/1).
-        double mcd = 0.0;
-        #pragma omp parallel for schedule(static) reduction(max:mcd)
+        double mcd = 0.0, wlmax_eff = 1e-9;
+        #pragma omp parallel for schedule(static) reduction(max:mcd, wlmax_eff)
         for (long e = 0; e < (long)Nedge; e++) {
             double mx = 0.0;
             for (int64_t j = pin_off[e]; j < pin_off[e + 1]; j++) {
@@ -325,14 +340,18 @@ void run_systolic(PlacerState& placer_state,
             }
             edge_mc[e] = mx;
             if (mx > mcd) mcd = mx;
+            double wl = (critgate && mx > critgate_thr) ? (double)edge_mult[e] : edge_wlw[e];  // gate WL by raw crit
+            if (wl > wlmax_eff) wlmax_eff = wl;
         }
         if (mcd <= 0.0) mcd = 1.0;
         double fwmax = 0.0;
         #pragma omp parallel for schedule(static) reduction(max:fwmax)
         for (long e = 0; e < (long)Nedge; e++) {
             double c = edge_mc[e] / mcd;
-            double t = (K.crit_exp == 1) ? c : std::pow(c, (double)K.crit_exp);
-            double fw = K.lambda * (edge_wlw[e] / WLWmax) + (1.0 - K.lambda) * t;
+            double t = critgate ? std::pow(c, ramp_exp)
+                                : ((K.crit_exp == 1) ? c : std::pow(c, (double)K.crit_exp));
+            double wl = (critgate && edge_mc[e] > critgate_thr) ? (double)edge_mult[e] : edge_wlw[e];
+            double fw = K.lambda * (wl / wlmax_eff) + (1.0 - K.lambda) * t;
             edge_fw[e] = fw;
             if (fw > fwmax) fwmax = fw;
         }
@@ -368,6 +387,7 @@ void run_systolic(PlacerState& placer_state,
     int phase = 0;
     int64_t best_cost = -1;
     int stall = 0, used_updates = 0, n_sta = 0, hold_ctr = 0;
+    bool psta_mid_done = false, psta_late_pending = false, psta_late_used = false;
     const double COST_EPS = 1e-3, MELT_A = 0.80;
     const long TEMP_FLOOR = metro ? 1 : 100;
     double t_sync = 0, t_sta = 0, t_rw = 0, t_place = 0;   // runtime breakdown
@@ -389,7 +409,18 @@ void run_systolic(PlacerState& placer_state,
     for (long u = 0; u < K.updts && !done; u++) {
         #pragma omp single
         {
-        if (use_timing && (u == 0 || (K.cadence > 0 && u % K.cadence == 0))) {
+        // Shared log-temp progress signal in [0,1], used by both the VPR-exponent ramp and the
+        // progress-tied STA mid-point trigger (0 at u==0 / before the post-melt temp0_ramp is set).
+        double anneal_prog = 0.0;
+        if (u > 0 && temp0_ramp > 1) {
+            double denom = std::log((double)temp0_ramp);
+            anneal_prog = denom > 0 ? (denom - std::log((double)(temp > 1 ? temp : 1))) / denom : 1.0;
+            anneal_prog = anneal_prog < 0 ? 0.0 : (anneal_prog > 1 ? 1.0 : anneal_prog);
+        }
+        bool psta_mid_hit = psta && !psta_mid_done && anneal_prog >= psta_mid;
+        if (psta_mid_hit) psta_mid_done = true;
+        if (use_timing && (u == 0 || (K.cadence > 0 && u % K.cadence == 0) || psta_mid_hit || psta_late_pending)) {
+            psta_late_pending = false;
             double _ta = omp_get_wtime(); sync_to_vpr();
             double _tb = omp_get_wtime(); t_sync += _tb - _ta;
             // For a true cadence refresh (u>0), recompute connection delays from the CURRENT placement
@@ -405,11 +436,12 @@ void run_systolic(PlacerState& placer_state,
                             pin_timing_invalidator->invalidate_connection(pin_id);
             }
             if (vpre_ramp) {   // VTR-style: ramp criticality exponent first->last as temp cools
-                double denom = std::log((double)temp0_ramp);
-                double prog = (u == 0 || denom <= 0) ? 0.0
-                            : (denom - std::log((double)(temp > 1 ? temp : 1))) / denom;
-                prog = prog < 0 ? 0 : (prog > 1 ? 1 : prog);
-                cp.crit_exponent = (float)(vpre_first + prog * (vpre_last - vpre_first));
+                ramp_exp = vpre_first + anneal_prog * (vpre_last - vpre_first);
+                if (!critgate) cp.crit_exponent = (float)ramp_exp;   // uniform exponent via VPR (default path)
+            }
+            if (critgate) {   // gate needs RAW crit: VPR returns raw, exponent applied to timing in reweight()
+                if (!vpre_ramp) ramp_exp = vpre_last;
+                cp.crit_exponent = 1.0f;
             }
             perform_full_timing_update(cp, delay_model, criticalities, setup_slacks,
                                        pin_timing_invalidator, timing_info, costs, placer_state);
@@ -568,7 +600,19 @@ void run_systolic(PlacerState& placer_state,
                     if (best_cost < 0 || (double)cost < (double)best_cost - COST_EPS * (double)best_cost) { best_cost = cost; stall = 0; }
                     else stall++;
                 }
-                if (stall >= K.stall_lim || temp <= TEMP_FLOOR) done = true;
+                if (stall >= K.stall_lim || temp <= TEMP_FLOOR) {
+                    if (psta && !psta_late_used) {
+                        // Guarantee one late STA+reweight on the near-converged placement before
+                        // really stopping, so the final polish moves use fresh criticalities instead
+                        // of whatever was current when the anneal happened to plateau. Reuses stall
+                        // itself as the polish window (up to stall_lim more hold-cycles) -- no new knob.
+                        psta_late_used = true;
+                        psta_late_pending = true;
+                        stall = 0;
+                    } else {
+                        done = true;
+                    }
+                }
                 hold_ctr = 0;
             }
         }
