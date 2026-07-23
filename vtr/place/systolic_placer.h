@@ -12,7 +12,7 @@
  * VPR's placement state so the normal finalization / routing flow proceeds.
  *
  * Behaviour knobs are read from environment variables (research code):
- *   SYSTOLIC_MODE    metro|threshold|fixed    (default metro)
+ *   SYSTOLIC_MODE    metro|fixed              (default metro)
  *   SYSTOLIC_SWPS    swap phases per update    (default 10)
  *   SYSTOLIC_UPDTS   max updates (safety cap)  (default 100000)
  *   SYSTOLIC_TEMP    initial temperature       (default 65535)
@@ -20,7 +20,6 @@
  *   SYSTOLIC_STALL   plateau window (updates)  (default 12)
  *   SYSTOLIC_THREADS OpenMP threads            (default: OMP default)
  *   SYSTOLIC_CRIT    1=timing-weighted, 0=WL-only (default 1)
- *   SYSTOLIC_CSCALE  criticality weight scale  (default 8)
  *   SYSTOLIC_CRIT_EXP criticality exponent     (default 1)
  *   SYSTOLIC_BASE    base (WL) weight per edge (default 1)
  *   SYSTOLIC_CADENCE 0 = STA once at start only (default); N>0 = also refresh every N updates

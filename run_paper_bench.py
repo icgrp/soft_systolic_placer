@@ -126,70 +126,113 @@ def sys_env(cfg):
         "soph_fx": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
                      "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
                      "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8},
-        "critgate_thr03": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
-                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
-                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
-                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.3},
-        "critgate_thr05": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
-                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
-                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
-                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.5},
-        "critgate_thr07": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
-                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10,
-                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
-                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        # lambda sweep on the crit-gate base (thr0.7, fixed 40x100): higher lambda = more WL weight, targeting
-        # the ~1.22x WL gap, on the principled gated-fanorm config. lambda=0.5 is critgate_thr07 (in cg_*.csv).
-        "critgate_lam60": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
-                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.6, "SYSTOLIC_CADENCE": 10,
-                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
-                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        "critgate_lam70": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
-                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 10,
-                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
-                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        "critgate_lam80": {"SYSTOLIC_MODE": "fixed", "SYSTOLIC_SWPS": 40, "SYSTOLIC_UPDTS": 100, "SYSTOLIC_CRIT": 1,
-                     "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1, "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 10,
-                     "SYSTOLIC_VPREXP_RAMP": 1, "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8,
-                     "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        # crit-gate + lambda on the DYNAMIC (metro) schedule with hold=8 (more annealing) -- the deployable path.
-        # Compare vs soph (metro) + vtr already in cluster/res_*.csv. hold=8 also lifts the update count back up,
-        # offsetting critgate's early-plateau churn.
-        "critgate_m_lam50": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        "critgate_m_lam70": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        "critgate_m_lam80": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 10, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        # FINAL validation: winning config (metro+hold8+critgate thr0.7+lambda0.7), cadence swept UP to cut STA
-        # from ~109 (cad10) to ~2-3, confirming quality holds. hold8 -> ~1088 updates so these get 2-5 refreshes.
-        "final_c200": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 200, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        "final_c500": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 500, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        "final_c800": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 800, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        # SPEED-FIRST configs targeting >=100x: lean anneal (hold 1/2) + high cadence (100) + free objective
-        # levers (crit-gate + lambda 0.8 for WL). Gives up the hold=8 WL win (incompatible with 100x).
-        "fast_h1": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 100, "SYSTOLIC_HOLD": 1, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        "fast_h2": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 100, "SYSTOLIC_HOLD": 2, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7},
-        # fast_h1 + progress-tied STA (idea #9): guarantees a mid (~50% log-temp progress) and a late
-        # (on convergence) STA+reweight regardless of update count, instead of relying on cadence=100
-        # landing at least once. Targets fast_h1's dnnweaver routing failure (too few STAs at hold=1).
-        "fast_h1_psta": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
-                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 100, "SYSTOLIC_HOLD": 1, "SYSTOLIC_VPREXP_RAMP": 1,
-                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_THR": 0.7,
+        # [Removed: critgate_thr03/05/07, critgate_lam60/70/80, critgate_m_lam50/70/80, final_c200/500/800,
+        # fast_h1/h2, fast_h1_psta, hold8_psta, hold8_psta_reheat, hold8_psta_thr50, hold8_psta_pct5/10/20,
+        # hold8_psta_auto, hold8_psta_gap -- the discrete-threshold/percentile/Otsu/gap crit-gate exploration
+        # and its intermediate PSTA-lineage configs. Superseded by the smooth blend below; see git history
+        # and TODO_IDEAS.md idea #2c for the full narrative.]
+        # neither statistical auto-threshold (Otsu, gap) beat a plain
+        # hand-picked percentage -- the criticality distribution has no clean, generically-extractable
+        # "natural cutoff" to find. Stop picking a threshold at all: blend each connection's WL weight
+        # continuously between fanorm'd and full by its own raw criticality c, blend=c^smooth_exp, with
+        # a GENTLE FIXED exponent decoupled from ramp_exp (reusing ramp_exp crushed mid-range c toward 0
+        # at high ramp -- exactly what crit-gate exists to avoid). smooth_exp=1 (default, plain linear)
+        # measured best so far: style1 0.939, style3 0.856, proxy.6 1.016 (geomean 0.934, beats every
+        # discrete-threshold method tried). Small sweep below to see if smooth_exp itself wants tuning.
+        "hold8_psta_smooth": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
                      "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_e05": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_CRITGATE_SMOOTH_EXP": 0.5, "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_e2": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_CRITGATE_SMOOTH_EXP": 2.0, "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_e4": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_CRITGATE_SMOOTH_EXP": 4.0, "SYSTOLIC_PSTA": 1},
+        # Lambda re-sweep under the smooth gate: lambda=0.7 was tuned against the OLD fixed-threshold
+        # gate (the hold=8 "double-win" search). Since the gate mechanism changed entirely (continuous
+        # blend, no threshold), that may no longer be the right WL/timing balance point -- the smooth
+        # gate already gives critical wide nets real WL pull, so lambda may be able to push further
+        # toward WL (higher) without paying as much Fmax as it used to.
+        "hold8_psta_smooth_l50": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.5, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_l60": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.6, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_l80": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.8, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_l90": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.9, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 8, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        # Hold re-sweep under the smooth gate: hold=8 was picked during the OLD fixed-threshold "double-win"
+        # search (idea #2/#3) and explicitly deferred/never re-run once the gate mechanism changed entirely
+        # (continuous blend, no threshold -- TODO_IDEAS.md idea #3's "hold sweep" note). Since lambda's old
+        # tuning point DIDN'T hold under the smooth gate (idea #5), hold's might not either. Sweep both
+        # directions from 8 to see what's actually needed now: more hold = more updates = more equilibration
+        # but also more place-time (report Fmax/WL/place-time together, not just Fmax).
+        "hold8_psta_smooth_h1": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 1, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_h2": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 2, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_h4": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 4, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_h16": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 16, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        "hold8_psta_smooth_h32": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 32, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1},
+        # CURRENT RECOMMENDED DEFAULT: hold8_psta_smooth_h4 + adaptive_swps baked in. The hold re-sweep
+        # above (hold8_psta_smooth_h1/h2/h4/h16/h32) found hold=8 wasn't buying anything over hold=4 in
+        # Fmax terms (geomean 99.3% of hold=8's, single-seed) while costing 45% more place-time; hold=16/32
+        # don't reliably help further either. adaptive_swps (idea #10) is separately confirmed at zero
+        # quality cost (18/18 Koios, Fmax ratio 0.9998-1.0, WL ratio ~1.002) with a real place-time win
+        # (14-22% depending on cluster contention). Combined here as the new default -- supersedes
+        # hold8_psta_smooth, which is kept unchanged above for historical/reproducibility reference.
+        "default": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 1, "SYSTOLIC_FANORM": 1, "SYSTOLIC_CRIT_EXP": 1,
+                     "SYSTOLIC_LAMBDA": 0.7, "SYSTOLIC_CADENCE": 0, "SYSTOLIC_HOLD": 4, "SYSTOLIC_VPREXP_RAMP": 1,
+                     "SYSTOLIC_VPREXP_FIRST": 1, "SYSTOLIC_VPREXP_LAST": 8, "SYSTOLIC_CRITGATE": 1, "SYSTOLIC_CRITGATE_SMOOTH": 1,
+                     "SYSTOLIC_PSTA": 1, "SYSTOLIC_ADAPTIVE_SWPS": 1, "SYSTOLIC_SWPS": 10},
+        # [Removed: fast_wl90/95/99/100 -- lambda sweep on the discrete fixed-threshold crit-gate
+        # (superseded by the smooth blend above; see git history).]
+        # The true floor: SYSTOLIC_CRIT=0 disables use_timing entirely -> the STA-trigger block
+        # (u==0 included) never fires, zero STA calls for the whole run. Edge weights are set once
+        # from plain fanout-normalized WL and never touched again (no crit-gate, no lambda blend --
+        # both require a timing signal that doesn't exist here). Fastest possible mode; blind to Fmax.
+        "fast_nosta": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 0, "SYSTOLIC_FANORM": 1, "SYSTOLIC_HOLD": 1},
+        # hold sweep for fast_nosta: more equilibration per cooling step -> more annealing time,
+        # hopefully closing some of the ~14% WL gap vs vtr_bb. No STA/cadence to confound this --
+        # 100% of place time is the anneal itself, so hold is a clean single-variable test here.
+        # Intended to run at SYSTOLIC_THREADS=8 (fixed), on the big designs where the 8-thread
+        # speedup headroom over the 100x target is largest (5-8x measured on proxy.6/lstm/etc).
+        "fast_nosta_h2": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 0, "SYSTOLIC_FANORM": 1, "SYSTOLIC_HOLD": 2},
+        "fast_nosta_h4": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 0, "SYSTOLIC_FANORM": 1, "SYSTOLIC_HOLD": 4},
+        "fast_nosta_h8": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 0, "SYSTOLIC_FANORM": 1, "SYSTOLIC_HOLD": 8},
+        # Inverse-fanout-weighting (SYSTOLIC_FANORM) off, isolated on the no-timing floor config
+        # (fast_nosta has no crit-gate at all, so nothing else protects wide nets here). Earlier
+        # "fanorm hurts large Koios" finding was on a different skeleton (cadence=10, no crit-gate,
+        # pre-crit-exponent-fix) -- re-test here.
+        "fast_nosta_nofan": {"SYSTOLIC_MODE": "metro", "SYSTOLIC_CRIT": 0, "SYSTOLIC_FANORM": 0, "SYSTOLIC_HOLD": 1},
         # soph + longer equilibration per temperature (SYSTOLIC_HOLD=8). Motivation: the 200x200 Koios
         # array has ~4x the slots of the 100x100 paper designs, so hold=1 (cool every update) freezes
         # too fast; hold=8 equilibrates 8 updates per cooling step. Anneal is ~0.2-0.4s so 8x is still
